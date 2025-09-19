@@ -36,19 +36,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: ✅ Validate AZURE_CREDENTIALS
-        if: ${{ !secrets.AZURE_CREDENTIALS }}
+      # Validate secret without using a problematic if-expression
+      - name: Validate AZURE_CREDENTIALS is present
+        shell: bash
         run: |
-          echo "AZURE_CREDENTIALS secret is missing." >&2
-          exit 1
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+            echo "AZURE_CREDENTIALS secret is missing or empty." >&2
+            exit 1
+          fi
 
       - name: Azure login (Service Principal JSON)
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Resolve the loginServer dynamically so we don't depend on repo variables
+      # Resolve login server dynamically
       - name: Resolve ACR login server
+        shell: bash
         run: |
           set -e
           ACR_LOGIN_SERVER=$(az acr show -n "$ACR_NAME" --query loginServer -o tsv)
@@ -58,10 +62,7 @@ jobs:
       - name: Login to Azure Container Registry
         run: az acr login --name "$ACR_NAME"
 
-      # Robust injection:
-      # - If placeholders exist (_PRODUCT_API_URL_ / _ORDER_API_URL_), replace them.
-      # - Else, replace const lines for PRODUCT_API_BASE_URL / ORDER_API_BASE_URL.
-      # - Else, prepend const lines at the top of the file.
+      # Inject URLs whether placeholders or consts are used; add them if missing
       - name: Inject backend URLs into frontend/main.js
         shell: bash
         run: |
@@ -117,8 +118,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ inputs.image_tag }}"
-          DEPLOY=frontend-deploy
-          CONTAINER=frontend
+          DEPLOY=frontend-deploy      # change if your deployment name differs
+          CONTAINER=frontend          # change if your container name differs
           kubectl set image deployment/$DEPLOY $CONTAINER="$ACR_LOGIN_SERVER/frontend:$TAG" --record
           kubectl rollout status deployment/$DEPLOY --timeout=300s
           kubectl get deploy,po,svc -o wide
