@@ -36,7 +36,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Validate secret without using a problematic if-expression
       - name: Validate AZURE_CREDENTIALS is present
         shell: bash
         run: |
@@ -50,7 +49,6 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Resolve login server dynamically
       - name: Resolve ACR login server
         shell: bash
         run: |
@@ -62,7 +60,6 @@ jobs:
       - name: Login to Azure Container Registry
         run: az acr login --name "$ACR_NAME"
 
-      # Inject URLs whether placeholders or consts are used; add them if missing
       - name: Inject backend URLs into frontend/main.js
         shell: bash
         run: |
@@ -111,17 +108,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # If your manifest lives elsewhere, fix the path here:
           kubectl apply -f k8s/frontend.yaml
+
+      - name: Discover deployment & container names (by label app=frontend)
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOY=$(kubectl get deploy -l app=frontend -o jsonpath='{.items[0].metadata.name}')
+          if [ -z "$DEPLOY" ]; then
+            echo "No deployment with label app=frontend found." >&2
+            kubectl get deploy -o wide || true
+            exit 1
+          fi
+          CONTAINER=$(kubectl get deploy "$DEPLOY" -o jsonpath='{.spec.template.spec.containers[0].name}')
+          echo "DEPLOY=$DEPLOY"       | tee -a "$GITHUB_ENV"
+          echo "CONTAINER=$CONTAINER" | tee -a "$GITHUB_ENV"
+          echo "Detected deployment: $DEPLOY ; container: $CONTAINER"
 
       - name: Update image & wait for rollout
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ inputs.image_tag }}"
-          DEPLOY=frontend-deploy      # change if your deployment name differs
-          CONTAINER=frontend          # change if your container name differs
-          kubectl set image deployment/$DEPLOY $CONTAINER="$ACR_LOGIN_SERVER/frontend:$TAG" --record
-          kubectl rollout status deployment/$DEPLOY --timeout=300s
+          kubectl set image deployment/"$DEPLOY" "$CONTAINER"="$ACR_LOGIN_SERVER/frontend:$TAG"
+          kubectl rollout status deployment/"$DEPLOY" --timeout=300s
           kubectl get deploy,po,svc -o wide
 
       - name: Logout
