@@ -1,22 +1,16 @@
 name: Release Orchestration (CI → CD)
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       environment:
+        description: "Environment (e.g., prod, staging)"
         required: true
-        type: string
+        default: "prod"
 
 jobs:
   backend:
     uses: ./.github/workflows/cd_backend.yml
-    with:
-      environment: ${{ inputs.environment }}
-    secrets: inherit
-
-  frontend:
-    needs: backend
-    uses: ./.github/workflows/cd_frontend.yml
     with:
       environment: ${{ inputs.environment }}
     secrets: inherit
