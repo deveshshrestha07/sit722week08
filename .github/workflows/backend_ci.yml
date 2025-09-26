@@ -5,8 +5,8 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'backend/**'
-      - '.github/workflows/backend_ci.yml'
+      - "backend/**"
+      - ".github/workflows/backend_ci.yml"
 
 env:
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
@@ -45,7 +45,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
@@ -82,29 +82,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Login even if Azure returns no subscriptions for the SP
-      - name: Azure login
+      # --- Azure auth & context ---------------------------------------------
+      - name: Validate AZURE_CREDENTIALS secret
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+            echo "::error::AZURE_CREDENTIALS secret is missing." >&2
+            exit 1
+          fi
+
+      - name: Azure login (Service Principal JSON)
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
           allow-no-subscriptions: true
+          environment: AzureCloud
 
-      # 2) Explicitly set the subscription from AZURE_CREDENTIALS JSON
-      - name: Select subscription
+      - name: Select subscription & show context
         shell: bash
         run: |
           set -e
           SUB_ID="${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}"
           if [ -z "$SUB_ID" ]; then
-            echo "subscriptionId missing in AZURE_CREDENTIALS JSON." >&2
+            echo "::error::subscriptionId missing in AZURE_CREDENTIALS JSON." >&2
             exit 1
           fi
           az account set --subscription "$SUB_ID"
-          echo "Using subscription:"
           az account show --query "{subscriptionId:id, tenantId:tenantId, name:name}"
 
-      # 3) Resolve ACR login server from secrets or Azure
-      - name: Resolve ACR info
+      # --- ACR discovery & login --------------------------------------------
+      - name: Resolve ACR login server
         id: acr
         shell: bash
         run: |
@@ -114,7 +121,7 @@ jobs:
             NAME="${SERVER%%.*}"
           else
             if [ -z "${{ secrets.ACR_NAME }}" ]; then
-              echo "Set ACR_LOGIN_SERVER or ACR_NAME in repo Secrets." >&2
+              echo "::error::Set either ACR_LOGIN_SERVER or ACR_NAME in repo Secrets." >&2
               exit 1
             fi
             NAME="${{ secrets.ACR_NAME }}"
@@ -127,6 +134,7 @@ jobs:
       - name: ACR login
         run: az acr login --name "${{ steps.acr.outputs.name }}"
 
+      # --- Build & push ------------------------------------------------------
       - name: Build & push product image
         run: |
           REG="${{ steps.acr.outputs.server }}"
