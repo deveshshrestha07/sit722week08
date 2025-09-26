@@ -12,7 +12,6 @@ permissions:
   contents: read
 
 env:
-  # Use the tag as immutable image tag when triggered by tag.
   IMAGE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('prod-{0}', github.sha) }}
 
 jobs:
@@ -31,7 +30,8 @@ jobs:
     needs: [ guard_merge ]
     if: always()
     runs-on: ubuntu-latest
-    environment: production  # require approval here
+    environment: production
+
     steps:
       - uses: actions/checkout@v4
 
@@ -45,16 +45,18 @@ jobs:
 
       - name: Resolve ACR login server
         id: acr
+        shell: bash
         run: |
+          set -e
           if [ -n "${{ secrets.ACR_LOGIN_SERVER }}" ]; then
-            echo "server=${{ secrets.ACR_LOGIN_SERVER }}" >> "$GITHUB_OUTPUT"
-            echo "name=${{ secrets.ACR_LOGIN_SERVER%%.* }}" >> "$GITHUB_OUTPUT"
+            SERVER="${{ secrets.ACR_LOGIN_SERVER }}"
+            NAME="${SERVER%%.*}"
           else
             NAME="${{ secrets.ACR_NAME }}"
             SERVER="$(az acr show -n "$NAME" --query loginServer -o tsv)"
-            echo "server=$SERVER" >> "$GITHUB_OUTPUT"
-            echo "name=$NAME"    >> "$GITHUB_OUTPUT"
           fi
+          echo "server=$SERVER" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME"     >> "$GITHUB_OUTPUT"
 
       - name: ACR login
         run: az acr login -n "${{ steps.acr.outputs.name }}"
@@ -75,6 +77,7 @@ jobs:
     needs: build_and_push
     runs-on: ubuntu-latest
     environment: production
+
     steps:
       - uses: actions/checkout@v4
 
@@ -94,12 +97,9 @@ jobs:
         shell: bash
         run: |
           set -e
-          REG="${{ secrets.ACR_LOGIN_SERVER || '' }}"
-          if [ -z "$REG" ]; then
-            REG="$(az acr show -n "${{ secrets.ACR_NAME }}" --query loginServer -o tsv)"
-          fi
-          sed -i "s|image: .*/product_service:.*|image: $REG/product_service:${{ env.IMAGE_TAG }}|g" k8s/product-service.yaml
-          sed -i "s|image: .*/order_service:.*|image: $REG/order_service:${{ env.IMAGE_TAG }}|g"   k8s/order-service.yaml
+          REG="${{ steps.acr.outputs.server }}"
+          sed -i "s|image: .*/product_service:.*|image: ${REG}/product_service:${{ env.IMAGE_TAG }}|g" k8s/product-service.yaml
+          sed -i "s|image: .*/order_service:.*|image: ${REG}/order_service:${{ env.IMAGE_TAG }}|g"   k8s/order-service.yaml
 
       - name: Apply manifests
         run: |
