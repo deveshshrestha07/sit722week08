@@ -1,0 +1,80 @@
+name: Reusable CI
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        required: false
+        default: "3.10"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      product_db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: products
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+        ports: [ "5432:5432" ]
+
+      order_db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: orders
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+        ports: [ "5433:5432" ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r backend/product_service/requirements.txt
+          pip install -r backend/order_service/requirements.txt
+          pip install pytest pytest-cov httpx
+
+      - name: Test product_service (with coverage)
+        working-directory: backend/product_service
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: products
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        run: |
+          pytest --maxfail=1 --disable-warnings --cov=. --cov-report=xml
+
+      - name: Test order_service (with coverage)
+        working-directory: backend/order_service
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5433
+          POSTGRES_DB: orders
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        run: |
+          pytest --maxfail=1 --disable-warnings --cov=. --cov-report=xml
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            backend/**/coverage.xml
