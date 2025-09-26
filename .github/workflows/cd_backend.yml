@@ -1,0 +1,47 @@
+name: CD Backend (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
+
+      - name: Ensure namespace
+        run: kubectl create namespace ${{ secrets.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply backend manifests
+        run: |
+          kubectl apply -n ${{ secrets.K8S_NAMESPACE }} -f k8s/secrets.yaml
+          kubectl apply -n ${{ secrets.K8S_NAMESPACE }} -f k8s/configmaps.yaml
+          kubectl apply -n ${{ secrets.K8S_NAMESPACE }} -f k8s/product-db.yaml
+          kubectl apply -n ${{ secrets.K8S_NAMESPACE }} -f k8s/order-db.yaml
+          kubectl apply -n ${{ secrets.K8S_NAMESPACE }} -f k8s/product-service.yaml
+          kubectl apply -n ${{ secrets.K8S_NAMESPACE }} -f k8s/order-service.yaml
+
+      - name: Wait for backend pods Ready
+        run: |
+          kubectl wait --for=condition=Ready pod -l app=product -n ${{ secrets.K8S_NAMESPACE }} --timeout=300s || true
+          kubectl wait --for=condition=Ready pod -l app=order -n ${{ secrets.K8S_NAMESPACE }} --timeout=300s || true
+
+      - name: Show backend services
+        run: kubectl get svc -n ${{ secrets.K8S_NAMESPACE }}
