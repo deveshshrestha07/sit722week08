@@ -16,8 +16,9 @@ on:
         required: true
         default: "sit722acr27253"
 
+# harmless if using SP JSON; required if you later switch to OIDC
 permissions:
-  id-token: write        # harmless if using SP JSON; needed if you switch to OIDC
+  id-token: write
   contents: read
 
 jobs:
@@ -33,30 +34,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Fail fast if secret missing/empty
+      # Single fail-fast check (no 'if:' needed anywhere else)
       - name: ✅ Validate AZURE_CREDENTIALS exists
-        if: ${{ !secrets.AZURE_CREDENTIALS }}
         run: |
-          echo "AZURE_CREDENTIALS secret is missing or empty." >&2
-          exit 1
+          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+            echo "AZURE_CREDENTIALS secret is missing or empty." >&2
+            exit 1
+          fi
 
       - name: Azure login (Service Principal JSON)
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Set Kubernetes context (get AKS credentials)
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
           az aks get-credentials \
             --resource-group "${{ github.event.inputs.aks_resource_group }}" \
             --name "${{ github.event.inputs.aks_cluster_name }}" \
             --overwrite-existing
 
-      # Optional: Attach ACR if needed (idempotent)
+      # Optional: Attach ACR if not already attached
       # - name: Attach ACR
-      #   if: ${{ secrets.AZURE_CREDENTIALS }}
       #   run: |
       #     az aks update \
       #       --name "${{ github.event.inputs.aks_cluster_name }}" \
@@ -64,7 +63,6 @@ jobs:
       #       --attach-acr "${{ github.event.inputs.aks_acr_name }}"
 
       - name: Deploy Backend Infrastructure (Namespace, ConfigMaps, Secrets, Databases)
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
           set -euo pipefail
           kubectl apply -f k8s/configmaps.yaml
@@ -73,14 +71,12 @@ jobs:
           kubectl apply -f k8s/order-db.yaml
 
       - name: Deploy Backend Microservices (Product, Order)
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
           set -euo pipefail
           kubectl apply -f k8s/product-service.yaml
           kubectl apply -f k8s/order-service.yaml
 
       - name: Wait for Backend LoadBalancer IPs
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
           set -euo pipefail
           PRODUCT_IP=""
@@ -106,14 +102,11 @@ jobs:
 
       - name: Capture Product Service IP for Workflow Output
         id: get_product_ip
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         run: echo "external_ip=${{ env.PRODUCT_IP }}" >> "$GITHUB_OUTPUT"
 
       - name: Capture Order Service IP for Workflow Output
         id: get_order_ip
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         run: echo "external_ip=${{ env.ORDER_IP }}" >> "$GITHUB_OUTPUT"
 
       - name: Logout from Azure
-        if: ${{ secrets.AZURE_CREDENTIALS }}
         run: az logout
