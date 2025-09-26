@@ -1,25 +1,15 @@
-name: CI - Test, Build & Push (Monorepo)
+name: Reusable CI
 
 on:
-  push:
-    branches: [ develop, main ]
-    paths:
-      - "backend/**"
-      - "frontend/**"
-      - ".github/workflows/ci.yml"
-  pull_request:
-    branches: [ develop ]
-    paths:
-      - "backend/**"
-      - "frontend/**"
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        required: false
+        default: "3.10"
 
-env:
-  ACR_NAME: ${{ secrets.ACR_NAME }}
-  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-  TAG: 1.0.0
-# 
 jobs:
-  test_and_build:
+  ci:
     runs-on: ubuntu-latest
 
     services:
@@ -29,10 +19,10 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: products
-        ports: [ "5432:5432" ]
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 10s --health-timeout 5s --health-retries 5
+        ports: [ "5432:5432" ]
 
       order_db:
         image: postgres:15
@@ -40,28 +30,27 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: orders
-        ports: [ "5433:5432" ]
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 10s --health-timeout 5s --health-retries 5
+        ports: [ "5433:5432" ]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ inputs.python-version }}
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           pip install --upgrade pip
           pip install -r backend/product_service/requirements.txt
           pip install -r backend/order_service/requirements.txt
-          pip install pytest httpx
+          pip install pytest pytest-cov httpx
 
-      - name: Run tests - product_service
+      - name: Test product_service (with coverage)
         working-directory: backend/product_service
         env:
           POSTGRES_HOST: localhost
@@ -69,9 +58,10 @@ jobs:
           POSTGRES_DB: products
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        run: pytest -q
+        run: |
+          pytest --maxfail=1 --disable-warnings --cov=. --cov-report=xml
 
-      - name: Run tests - order_service
+      - name: Test order_service (with coverage)
         working-directory: backend/order_service
         env:
           POSTGRES_HOST: localhost
@@ -79,41 +69,12 @@ jobs:
           POSTGRES_DB: orders
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        run: pytest -q
+        run: |
+          pytest --maxfail=1 --disable-warnings --cov=. --cov-report=xml
 
-      - name: Azure login
-        uses: azure/login@v1
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Derive ACR name
-        id: acr
-        run: |
-          ACR_NAME=$(echo "${{ env.ACR_LOGIN_SERVER }}" | cut -d. -f1)
-          echo "name=$ACR_NAME" >> $GITHUB_OUTPUT
-
-      - name: ACR login
-        run: az acr login -n ${{ steps.acr.outputs.name }}
-
-      - name: Build & push product image
-        run: |
-          docker build -t ${{ env.ACR_LOGIN_SERVER }}/product:${{ env.TAG }} backend/product_service
-          docker push ${{ env.ACR_LOGIN_SERVER }}/product:${{ env.TAG }}
-
-      - name: Build & push order image
-        run: |
-          docker build -t ${{ env.ACR_LOGIN_SERVER }}/order:${{ env.TAG }} backend/order_service
-          docker push ${{ env.ACR_LOGIN_SERVER }}/order:${{ env.TAG }}
-
-      - name: Build & push frontend image
-        run: |
-          docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.TAG }} frontend
-          docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ env.TAG }}
-
-  trigger_release_on_main:
-    if: ${{ github.ref == 'refs/heads/main' }}
-    needs: [ test_and_build ]
-    uses: ./.github/workflows/release.yml
-    with:
-      environment: prod
-    secrets: inherit
+          name: coverage-reports
+          path: |
+            backend/**/coverage.xml
