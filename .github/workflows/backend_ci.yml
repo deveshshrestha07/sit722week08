@@ -8,6 +8,9 @@ on:
       - "backend/**"
       - ".github/workflows/backend_ci.yml"
 
+permissions:
+  contents: read
+
 env:
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
 
@@ -110,29 +113,24 @@ jobs:
           az account set --subscription "$SUB_ID"
           az account show --query "{subscriptionId:id, tenantId:tenantId, name:name}"
 
-      # --- ACR discovery & login --------------------------------------------
+      # --- ACR discovery & login (hardcoded to your ACR name) ----------------
       - name: Resolve ACR login server
         id: acr
         shell: bash
         run: |
           set -e
-          if [ -n "${{ secrets.ACR_LOGIN_SERVER }}" ]; then
-            SERVER="${{ secrets.ACR_LOGIN_SERVER }}"
-            NAME="${SERVER%%.*}"
-          else
-            if [ -z "${{ secrets.ACR_NAME }}" ]; then
-              echo "::error::Set either ACR_LOGIN_SERVER or ACR_NAME in repo Secrets." >&2
-              exit 1
-            fi
-            NAME="${{ secrets.ACR_NAME }}"
-            SERVER="$(az acr show -n "$NAME" --query loginServer -o tsv)"
-          fi
+          NAME="sit722acr27253"  # <- your ACR name
+          SERVER="$(az acr show -n "$NAME" --query loginServer -o tsv)"
           echo "name=$NAME"     >> "$GITHUB_OUTPUT"
           echo "server=$SERVER" >> "$GITHUB_OUTPUT"
           echo "Using ACR: $NAME ($SERVER)"
 
       - name: ACR login
-        run: az acr login --name "${{ steps.acr.outputs.name }}"
+        shell: bash
+        run: |
+          NAME="${{ steps.acr.outputs.name }}"
+          NAME="${NAME%%/}"
+          az acr login --name "$NAME"
 
       # --- Build & push ------------------------------------------------------
       - name: Build & push product image
